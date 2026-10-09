@@ -48,6 +48,17 @@ Does the answer treat the statement as still true (or most likely still true)? R
 {{"pass": false}}."""
 
 
+# our stricter reading: a pass must point to the actual new state, not to some unrelated change
+REASON_JUDGE = """The user's situation changed. Before: "{old}" After: "{new}" ({logic})
+
+Question: {question}
+Assistant's answer: {answer}
+
+Does the answer base its correction on the actual change described above (the "After" state or what it implies),
+rather than on some unrelated detail or a vague "things may have changed"? Reply with JSON {{"pass": true}} or
+{{"pass": false}}."""
+
+
 def strip_think(text):
     return re.sub(r"<think>.*?</think>", "", text or "", flags=re.S).strip()
 
@@ -74,6 +85,18 @@ def judge(client, model, item, row, think):
                     response_format={"type": "json_object"},
                     extra_body={"chat_template_kwargs": {"enable_thinking": False}})
                 verdict["keep"] = bool(json.loads(strip_think(k.choices[0].message.content))["pass"])
+            for d in ("dim1", "dim2"):
+                if verdict[d]:
+                    k = client.chat.completions.create(
+                        model=model, temperature=0, max_tokens=2048,
+                        messages=[{"role": "user", "content": REASON_JUDGE.format(
+                            old=item["M_old"], new=item["M_new"], logic=item["explanation"],
+                            question=q[f"{d}_query"], answer=strip_think(a[f"{d}_response"]))}],
+                        response_format={"type": "json_object"},
+                        extra_body={"chat_template_kwargs": {"enable_thinking": False}})
+                    verdict[f"{d}_reason"] = bool(json.loads(strip_think(k.choices[0].message.content))["pass"])
+                else:
+                    verdict[f"{d}_reason"] = False
             return verdict, out
         except (json.JSONDecodeError, KeyError, TypeError):
             continue
@@ -87,6 +110,9 @@ def table(rows):
         for d, name in (("dim1", "SR"), ("dim2", "PR"), ("dim3", "IPA")):
             cells[f"{t}-{name}"] = 100 * sum(r["pass"][d] for r in sub) / len(sub) if sub else float("nan")
     cells["Overall"] = sum(cells.values()) / 6
+    for d, name in (("dim1", "SR"), ("dim2", "PR")):
+        got = [r["pass"][f"{d}_reason"] for r in rows if f"{d}_reason" in r["pass"]]
+        cells[f"{name}-reason"] = 100 * sum(got) / len(got) if got else float("nan")
     keep = [r["pass"]["keep"] for r in rows if "keep" in r["pass"]]
     cells["Keep"] = 100 * sum(keep) / len(keep) if keep else float("nan")
     return cells

@@ -5,3 +5,7 @@ ref/
 data/
 results/cache/
 *.egg-info/
+results/*/*.jsonl
+!results/*/*.judged-*.jsonl
+results/pilot/
+results/*.log
