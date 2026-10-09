@@ -10,6 +10,7 @@ class Fact:
     topic: str = ""
     replaced_by: int | None = None
     replaced_on: str | None = None
+    expired: bool = False
     sources: list = field(default_factory=list)
 
     @property
@@ -28,9 +29,13 @@ class Ledger:
         self.facts.append(f)
         return f
 
-    def supersede(self, old, new):
+    def supersede(self, old, new, expired=False):
+        """Mark old as no longer true because of new. Expired means it was only ever true for a moment."""
         if old.current:
-            old.replaced_by, old.replaced_on = new.id, new.date
+            old.replaced_by, old.replaced_on, old.expired = new.id, new.date, expired
+
+    def contradicted(self):
+        return [f for f in self.facts if not f.current and not f.expired]
 
     def current(self):
         return [f for f in self.facts if f.current]
@@ -39,7 +44,7 @@ class Ledger:
         lines = ["What is true about the user now (most recent first):"]
         for f in sorted(self.current(), key=lambda f: f.date, reverse=True):
             lines.append(f"- [{f.date[:10]}] {f.text}" + (" (inferred)" if f.implied else ""))
-        old = [f for f in self.facts if not f.current]
+        old = self.contradicted()
         if history and old:
             lines += ["", "No longer true (kept for history):"]
             for f in sorted(old, key=lambda f: f.date):

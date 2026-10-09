@@ -32,9 +32,10 @@ Messages:
 TOPICS = ["home", "climate", "housing", "work", "school", "family", "pets", "health", "diet", "religion", "transport",
           "routine", "hobby", "activity", "travel", "request"]
 # lasting facts are compared within their group; "activity" only holds for the latest session it was mentioned in;
-# hobbies, routines, requests and trips accumulate and never overturn anything
+# requests and trips accumulate and never overturn anything
 GROUPS = {"home": "place", "climate": "place", "housing": "place"}
-CHECKED = {"home", "climate", "housing", "work", "school", "family", "pets", "health", "diet", "religion", "transport"}
+CHECKED = {"home", "climate", "housing", "work", "school", "family", "pets", "health", "diet", "religion", "transport",
+           "routine", "hobby"}
 
 SCHEMA = {
     "type": "object",
@@ -99,16 +100,17 @@ class Memory:
             if any(f.topic == "activity" for f in new):
                 for o in self.ledger.current():
                     if o.topic == "activity" and o.date < date:
-                        self.ledger.supersede(o, next(f for f in new if f.topic == "activity"))
+                        self.ledger.supersede(o, next(f for f in new if f.topic == "activity"), expired=True)
             pairs = []
             for f, v in zip(new, vecs):
                 if f.topic not in CHECKED:
                     continue
                 group = GROUPS.get(f.topic, f.topic)
-                cands = [o for o in self.ledger.current() if o.date < f.date and o.topic in CHECKED
-                         and GROUPS.get(o.topic, o.topic) == group]
+                cands = [o for o in self.ledger.current() if o.date < f.date and o.topic in CHECKED]
                 cands.sort(key=lambda o: -float(self.vecs[o.id] @ v))
-                pairs += [(o, f) for o in cands[: self.k]]
+                same = [o for o in cands if GROUPS.get(o.topic, o.topic) == group][: self.k]
+                # topics are noisy, so also look at the closest facts filed elsewhere
+                pairs += [(o, f) for o in same + [o for o in cands[:3] if o not in same]]
             self.checks += len(pairs)
             with ThreadPoolExecutor(16) as pool:
                 probs = list(pool.map(self.llm.yes_prob, [self._fmt(CONFLICT, o, f) for o, f in pairs]))
@@ -132,9 +134,9 @@ class Memory:
         m = re.search(r'"no_longer_true"\s*:\s*(true|false)', text)
         return bool(m) and m.group(1) == "true"
 
-    def premise_notes(self, question, k=5):
+    def premise_notes(self, question, k=5, threshold=0.5):
         """Warnings for outdated facts that the question takes for granted."""
-        old = [f for f in self.ledger.facts if not f.current]
+        old = self.ledger.contradicted()
         if not old:
             return []
         q = self.embed([question])[0]
@@ -144,7 +146,7 @@ class Memory:
             probs = list(pool.map(self.llm.yes_prob, [PREMISE.format(question=question, fact=f.text) for f in top]))
         notes = []
         for f, p in zip(top, probs):
-            if p > 0.5:
+            if p > threshold:
                 new = self.ledger.facts[f.replaced_by]
                 notes.append(f'The question assumes "{f.text}" but that is no longer true. Since {f.replaced_on[:10]}: '
                              f"{new.text}")

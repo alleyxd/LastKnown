@@ -11,6 +11,7 @@ methods:
   tidemark     noguard + premise guard (warns the model when a question assumes an outdated fact)
 """
 import argparse
+import os
 import hashlib
 import json
 import threading
@@ -121,7 +122,7 @@ def run_item(item, method, llm, embed, think):
     out = {}
     for d in DIMS:
         q = query(item, d)
-        notes = mem.premise_notes(q) if method == "tidemark" else []
+        notes = mem.premise_notes(q, threshold=float(os.environ.get("TIDEMARK_GUARD", "0.5"))) if method == "tidemark" else []
         if notes:
             stats.setdefault("notes", {})[d] = notes
         out[d] = answer(llm, memory_text, q, today, notes=notes, think=think)

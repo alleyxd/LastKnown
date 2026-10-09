@@ -3,9 +3,10 @@ Today is {today}.
 
 {memory}
 
-Use what is true about the user now when you answer. If the user's question assumes something that is no longer
-true, say briefly what changed and answer for their current situation instead. If the memory does not cover what you
-need, ask or say so rather than guessing."""
+Use what is true about the user now when you answer. Everything in the first list is still true. Only treat something
+as changed if it appears in the "No longer true" list; if the user's question assumes one of those, say briefly what
+changed and answer for their current situation instead. If the memory does not cover what you need, ask or say so
+rather than guessing."""
 
 NOTES = """
 
