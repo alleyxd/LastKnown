@@ -1,0 +1,155 @@
+"""Run a memory method on the STALE benchmark and save the three answers per scenario.
+
+python bench/stale.py --method tidemark --out results/qwen3-8b/tidemark.jsonl [--limit 20] [--workers 24]
+
+methods:
+  turns-plain  all user messages with dates, the benchmark's neutral prompt
+  turns        all user messages with dates, our answer prompt
+  facts        extracted facts with dates, no invalidation, no implied facts
+  invalidate   facts + conflict check, no implied facts
+  tidemark     facts + implied facts + conflict check
+"""
+import argparse
+import hashlib
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+
+import numpy as np
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tidemark import LLM, Memory, answer  # noqa: E402
+
+HERE = Path(__file__).resolve().parent.parent
+DIMS = ["dim1_query", "dim2_query", "dim3_query"]
+
+PLAIN = {
+    "dim3_query": ("You are a helpful assistant. Review the following conversation history with the user, then respond "
+                   "to the user's latest query directly.", "[Latest Query]"),
+    "other": ("You are a helpful assistant. Review the following conversation history with the user, then accurately "
+              "answer the question.", "[Question]"),
+}
+
+
+class Embedder:
+    def __init__(self, name="BAAI/bge-base-en-v1.5"):
+        from sentence_transformers import SentenceTransformer
+        self.model = SentenceTransformer(name)
+        self.lock = threading.Lock()
+
+    def __call__(self, texts):
+        with self.lock:
+            return list(np.asarray(self.model.encode(texts, normalize_embeddings=True, batch_size=64)))
+
+
+class Cache:
+    """Extraction results keyed by prompt, so repeated distractor sessions are only processed once."""
+
+    def __init__(self, path):
+        self.path, self.lock, self.data = Path(path), threading.Lock(), {}
+        if self.path.exists():
+            for line in self.path.read_text(encoding="utf-8").splitlines():
+                k, v = json.loads(line)
+                self.data[k] = v
+
+    def wrap(self, llm):
+        chat = llm.chat
+
+        def cached(messages, **kw):
+            key = hashlib.sha1(json.dumps([messages, kw], sort_keys=True).encode()).hexdigest()
+            if key in self.data:
+                return self.data[key]
+            out = chat(messages, **kw)
+            with self.lock:
+                self.data[key] = out
+                with self.path.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps([key, out]) + "\n")
+            return out
+        return cached
+
+
+def sessions(item):
+    rows = sorted(zip(item["timestamps"], item["haystack_session"]), key=lambda r: r[0])
+    for date, turns in rows:
+        yield date, [m["content"] for m in turns if m["role"] == "user"]
+
+
+def turns_text(item):
+    lines = ["Messages the user sent in earlier conversations (oldest first):"]
+    for date, msgs in sessions(item):
+        lines += [f"[{date}] {m}" for m in msgs]
+    return "\n".join(lines)
+
+
+def run_item(item, method, llm, embed, think):
+    today = max(item["timestamps"])[:10]
+    stats = {}
+    if method == "turns-plain":
+        history = turns_text(item)
+        out = {}
+        for d in DIMS:
+            sys_prompt, tag = PLAIN["dim3_query" if d == "dim3_query" else "other"]
+            msgs = [{"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": f"[Conversation History]\n{history}\n\n{tag}\n{item['probing_queries'][d]}"}]
+            out[d] = llm.chat(msgs, max_tokens=4096 if think else 1024, think=think)
+        return out, stats
+    if method == "turns":
+        memory_text = turns_text(item)
+    else:
+        mem = Memory(llm, embed, implied=method == "tidemark", invalidate=method != "facts")
+        for date, msgs in sessions(item):
+            if msgs:
+                mem.write(msgs, date)
+        memory_text = mem.ledger.render()
+        stats = {"facts": len(mem.ledger.facts), "current": len(mem.ledger.current()), "checks": mem.checks,
+                 "ledger": mem.ledger.to_json()}
+    out = {d: answer(llm, memory_text, item["probing_queries"][d], today, think=think) for d in DIMS}
+    return out, stats
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--method", required=True, choices=["turns-plain", "turns", "facts", "invalidate", "tidemark"])
+    ap.add_argument("--out", required=True, type=Path)
+    ap.add_argument("--data", default=HERE / "data" / "stale.json", type=Path)
+    ap.add_argument("--limit", type=int)
+    ap.add_argument("--workers", type=int, default=24)
+    ap.add_argument("--think", action="store_true")
+    args = ap.parse_args()
+
+    items = json.loads(args.data.read_text(encoding="utf-8"))
+    # interleave T1 and T2 so a --limit run covers both types
+    t1, t2 = [x for x in items if x["type"] == "T1"], [x for x in items if x["type"] == "T2"]
+    items = [x for pair in zip(t1, t2) for x in pair][: args.limit]
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    done = set()
+    if args.out.exists():
+        done = {json.loads(l)["uid"] for l in args.out.read_text(encoding="utf-8").splitlines() if l.strip()}
+    todo = [x for x in items if x["uid"] not in done]
+    print(f"{len(todo)} to run, {len(done)} done", flush=True)
+
+    llm = LLM()
+    llm.chat = Cache(HERE / "results" / "cache" / f"{llm.model}.jsonl").wrap(llm.chat)
+    embed = Embedder() if args.method not in ("turns", "turns-plain") else None
+    lock = threading.Lock()
+    with ThreadPoolExecutor(args.workers) as pool:
+        futs = {pool.submit(run_item, x, args.method, llm, embed, args.think): x for x in todo}
+        for n, fut in enumerate(as_completed(futs), 1):
+            x = futs[fut]
+            try:
+                out, stats = fut.result()
+            except Exception as e:  # keep going, the item is retried on the next run
+                print(f"{x['uid']}: {type(e).__name__}: {e}", flush=True)
+                continue
+            row = {"uid": x["uid"], "type": x["type"], "method": args.method, "model": llm.model,
+                   "target_model_responses": {d.replace("_query", "_response"): out[d] for d in DIMS}, **stats}
+            with lock, args.out.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            if n % 10 == 0:
+                print(f"{n}/{len(todo)}", flush=True)
+
+
+if __name__ == "__main__":
+    main()
