@@ -38,6 +38,16 @@ Target Model Response 3: {a3}
 """
 
 
+# our own control check, not part of STALE
+KEEP_JUDGE = """The user earlier said: "{new}"
+Nothing later in the conversation contradicts this. The user asked the assistant whether it is still the case.
+
+Assistant's answer: {answer}
+
+Does the answer treat the statement as still true (or most likely still true)? Reply with JSON {{"pass": true}} or
+{{"pass": false}}."""
+
+
 def strip_think(text):
     return re.sub(r"<think>.*?</think>", "", text or "", flags=re.S).strip()
 
@@ -55,7 +65,16 @@ def judge(client, model, item, row, think):
             response_format={"type": "json_object"}, extra_body={"chat_template_kwargs": {"enable_thinking": think}})
         try:
             out = json.loads(strip_think(r.choices[0].message.content))
-            return {d: bool(out[f"{d}_eval"]["pass"]) for d in ("dim1", "dim2", "dim3")}, out
+            verdict = {d: bool(out[f"{d}_eval"]["pass"]) for d in ("dim1", "dim2", "dim3")}
+            if "keep_response" in a:
+                k = client.chat.completions.create(
+                    model=model, temperature=0, max_tokens=2048,
+                    messages=[{"role": "user", "content": KEEP_JUDGE.format(
+                        new=item["M_new"], answer=strip_think(a["keep_response"]))}],
+                    response_format={"type": "json_object"},
+                    extra_body={"chat_template_kwargs": {"enable_thinking": False}})
+                verdict["keep"] = bool(json.loads(strip_think(k.choices[0].message.content))["pass"])
+            return verdict, out
         except (json.JSONDecodeError, KeyError, TypeError):
             continue
     raise RuntimeError(f"judge failed for {row['uid']}")
@@ -68,6 +87,8 @@ def table(rows):
         for d, name in (("dim1", "SR"), ("dim2", "PR"), ("dim3", "IPA")):
             cells[f"{t}-{name}"] = 100 * sum(r["pass"][d] for r in sub) / len(sub) if sub else float("nan")
     cells["Overall"] = sum(cells.values()) / 6
+    keep = [r["pass"]["keep"] for r in rows if "keep" in r["pass"]]
+    cells["Keep"] = 100 * sum(keep) / len(keep) if keep else float("nan")
     return cells
 
 
@@ -86,7 +107,7 @@ def main():
     client = OpenAI(base_url=args.base_url, api_key=args.api_key, timeout=900)
     tag = re.sub(r"[^\w.-]", "_", args.judge_model)
     print(f"{'method':32}" + "".join(f"{c:>9}" for c in ["T1-SR", "T1-PR", "T1-IPA", "T2-SR", "T2-PR", "T2-IPA",
-                                                          "Overall"]) + "      n")
+                                                          "Overall", "Keep"]) + "      n")
     for path in args.answers:
         out_path = path.with_suffix(f".judged-{tag}.jsonl")
         judged = {}

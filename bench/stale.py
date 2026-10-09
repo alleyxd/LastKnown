@@ -7,7 +7,8 @@ methods:
   turns        all user messages with dates, our answer prompt
   facts        extracted facts with dates, no invalidation, no implied facts
   invalidate   facts + conflict check, no implied facts
-  tidemark     facts + implied facts + conflict check
+  noguard      facts + implied facts + conflict check
+  tidemark     noguard + premise guard (warns the model when a question assumes an outdated fact)
 """
 import argparse
 import hashlib
@@ -21,9 +22,13 @@ import numpy as np
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tidemark import LLM, Memory, answer  # noqa: E402
+from tidemark.memory import clip  # noqa: E402
 
 HERE = Path(__file__).resolve().parent.parent
-DIMS = ["dim1_query", "dim2_query", "dim3_query"]
+DIMS = ["dim1_query", "dim2_query", "dim3_query", "keep_query"]
+# not part of STALE: checks that the newer fact is still treated as true, so forgetting everything is not rewarded
+KEEP = 'Earlier I told you: "{new}" Is that still the case for me now, as far as you know?'
+
 
 PLAIN = {
     "dim3_query": ("You are a helpful assistant. Review the following conversation history with the user, then respond "
@@ -49,6 +54,7 @@ class Cache:
 
     def __init__(self, path):
         self.path, self.lock, self.data = Path(path), threading.Lock(), {}
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.exists():
             for line in self.path.read_text(encoding="utf-8").splitlines():
                 k, v = json.loads(line)
@@ -79,8 +85,12 @@ def sessions(item):
 def turns_text(item):
     lines = ["Messages the user sent in earlier conversations (oldest first):"]
     for date, msgs in sessions(item):
-        lines += [f"[{date}] {m}" for m in msgs]
+        lines += [f"[{date}] {clip(m)}" for m in msgs]
     return "\n".join(lines)
+
+
+def query(item, d):
+    return KEEP.format(new=item["M_new"]) if d == "keep_query" else item["probing_queries"][d]
 
 
 def run_item(item, method, llm, embed, think):
@@ -92,26 +102,35 @@ def run_item(item, method, llm, embed, think):
         for d in DIMS:
             sys_prompt, tag = PLAIN["dim3_query" if d == "dim3_query" else "other"]
             msgs = [{"role": "system", "content": sys_prompt},
-                    {"role": "user", "content": f"[Conversation History]\n{history}\n\n{tag}\n{item['probing_queries'][d]}"}]
+                    {"role": "user", "content": f"[Conversation History]\n{history}\n\n{tag}\n{query(item, d)}"}]
             out[d] = llm.chat(msgs, max_tokens=4096 if think else 1024, think=think)
         return out, stats
     if method == "turns":
         memory_text = turns_text(item)
     else:
-        mem = Memory(llm, embed, implied=method == "tidemark", invalidate=method != "facts")
+        mem = Memory(llm, embed, implied=method in ("noguard", "tidemark"), invalidate=method != "facts")
+        # extraction does not depend on memory state, so warm the cache for all sessions at once
+        with ThreadPoolExecutor(8) as pool:
+            list(pool.map(lambda s: mem.extract(s[1], s[0]), [s for s in sessions(item) if s[1]]))
         for date, msgs in sessions(item):
             if msgs:
                 mem.write(msgs, date)
         memory_text = mem.ledger.render()
-        stats = {"facts": len(mem.ledger.facts), "current": len(mem.ledger.current()), "checks": mem.checks,
+        stats = {"facts": len(mem.ledger.facts), "current": len(mem.ledger.current()), "checks": mem.checks, "verified": mem.verified,
                  "ledger": mem.ledger.to_json()}
-    out = {d: answer(llm, memory_text, item["probing_queries"][d], today, think=think) for d in DIMS}
+    out = {}
+    for d in DIMS:
+        q = query(item, d)
+        notes = mem.premise_notes(q) if method == "tidemark" else []
+        if notes:
+            stats.setdefault("notes", {})[d] = notes
+        out[d] = answer(llm, memory_text, q, today, notes=notes, think=think)
     return out, stats
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--method", required=True, choices=["turns-plain", "turns", "facts", "invalidate", "tidemark"])
+    ap.add_argument("--method", required=True, choices=["turns-plain", "turns", "facts", "invalidate", "noguard", "tidemark"])
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--data", default=HERE / "data" / "stale.json", type=Path)
     ap.add_argument("--limit", type=int)
@@ -131,7 +150,7 @@ def main():
     print(f"{len(todo)} to run, {len(done)} done", flush=True)
 
     llm = LLM()
-    llm.chat = Cache(HERE / "results" / "cache" / f"{llm.model}.jsonl").wrap(llm.chat)
+    llm.chat = Cache(HERE / "results" / "cache" / f"{llm.model}.jsonl").wrap(llm)
     embed = Embedder() if args.method not in ("turns", "turns-plain") else None
     lock = threading.Lock()
     with ThreadPoolExecutor(args.workers) as pool:

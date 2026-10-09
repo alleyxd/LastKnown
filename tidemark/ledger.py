@@ -7,6 +7,7 @@ class Fact:
     text: str
     date: str
     implied: bool = False
+    topic: str = ""
     replaced_by: int | None = None
     replaced_on: str | None = None
     sources: list = field(default_factory=list)
@@ -22,8 +23,8 @@ class Ledger:
     def __init__(self):
         self.facts = []
 
-    def add(self, text, date, implied=False):
-        f = Fact(len(self.facts), text, date, implied)
+    def add(self, text, date, implied=False, topic=""):
+        f = Fact(len(self.facts), text, date, implied, topic)
         self.facts.append(f)
         return f
 
