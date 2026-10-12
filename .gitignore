@@ -12,3 +12,8 @@ results/*.log
 chain.sh
 run_rest.sh
 run_all.sh
+run_v2.sh
+run_holdout.sh
+examples/user.json
+paper/*.aux
+paper/*.log

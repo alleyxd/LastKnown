@@ -1,6 +1,6 @@
 """Run a memory method on the STALE benchmark and save the three answers per scenario.
 
-python bench/stale.py --method tidemark --out results/qwen3-8b/tidemark.jsonl [--limit 20] [--workers 24]
+TIDEMARK_MODEL=qwen3-8b TIDEMARK_THINKING_SWITCH=1 python bench/stale.py --method tidemark --out results/qwen3-8b/tidemark.jsonl
 
 methods:
   turns-plain  all user messages with dates, the benchmark's neutral prompt
@@ -18,11 +18,9 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-import numpy as np
-
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tidemark import LLM, Memory, answer  # noqa: E402
+from tidemark import LLM, LocalEmbedder, Memory, answer  # noqa: E402
 from tidemark.memory import clip  # noqa: E402
 
 HERE = Path(__file__).resolve().parent.parent
@@ -37,17 +35,6 @@ PLAIN = {
     "other": ("You are a helpful assistant. Review the following conversation history with the user, then accurately "
               "answer the question.", "[Question]"),
 }
-
-
-class Embedder:
-    def __init__(self, name="BAAI/bge-base-en-v1.5"):
-        from sentence_transformers import SentenceTransformer
-        self.model = SentenceTransformer(name)
-        self.lock = threading.Lock()
-
-    def __call__(self, texts):
-        with self.lock:
-            return list(np.asarray(self.model.encode(texts, normalize_embeddings=True, batch_size=64)))
 
 
 class Cache:
@@ -152,7 +139,7 @@ def main():
 
     llm = LLM()
     llm.chat = Cache(HERE / "results" / "cache" / f"{llm.model}.jsonl").wrap(llm)
-    embed = Embedder() if args.method not in ("turns", "turns-plain") else None
+    embed = LocalEmbedder() if args.method not in ("turns", "turns-plain") else None
     lock = threading.Lock()
     with ThreadPoolExecutor(args.workers) as pool:
         futs = {pool.submit(run_item, x, args.method, llm, embed, args.think): x for x in todo}

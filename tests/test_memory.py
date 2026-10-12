@@ -67,3 +67,15 @@ def test_render_orders_newest_first():
     led.add("new", "2021-01-01")
     lines = led.render().splitlines()
     assert lines[1].endswith("new") and lines[2].endswith("old")
+
+
+def test_save_and_load(tmp_path):
+    llm = FakeLLM([[{"fact": "The user lives in Seattle.", "implied": False, "topic": "home"}],
+                   [{"fact": "The user lives in Austin.", "implied": False, "topic": "home"}]])
+    mem = Memory(llm, fake_embed)
+    mem.write(["a"], "2022-01-01")
+    mem.write(["b"], "2023-01-01")
+    mem.save(tmp_path / "user.json")
+    back = Memory.load(tmp_path / "user.json", llm, fake_embed)
+    assert back.context() == mem.context()
+    assert len(back.vecs) == len(mem.vecs)

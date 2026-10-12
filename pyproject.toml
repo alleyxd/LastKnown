@@ -1,14 +1,20 @@
 [project]
 name = "tidemark"
 version = "0.1.0"
-description = "Long-term memory for local LLM agents that knows when a memory is no longer true."
-requires-python = ">=3.11"
+description = "Long-term memory for LLM assistants that notices when a memory is no longer true."
+readme = "README.md"
+requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "Ali Ashter" }]
-dependencies = ["openai>=1.40", "numpy", "sentence-transformers"]
+dependencies = ["openai>=1.40", "numpy"]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+local = ["sentence-transformers"]
+dev = ["pytest", "sentence-transformers"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["tidemark"]

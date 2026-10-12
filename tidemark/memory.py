@@ -1,10 +1,13 @@
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date as _date
+from pathlib import Path
 
 import numpy as np
 
-from .ledger import Ledger
+from .answer import answer
+from .ledger import Fact, Ledger
 
 EXTRACT = """Below are messages a user sent to an assistant on {date}.
 
@@ -57,6 +60,8 @@ Later ({new_date}) we learned: {new}
 Does the later note mean the earlier note is no longer true about the user today? Visits, trips, hotel stays, new
 interests, unrelated topics and vague guesses do not overturn anything. Use common sense about what the later note
 implies. Answer with JSON {{"no_longer_true": true}} or {{"no_longer_true": false}}."""
+# models without a thinking mode get room to reason before the verdict
+REASON_HINT = " Think it through in a few sentences first, then end with the JSON."
 
 
 PREMISE = """Question from the user: {question}
@@ -70,6 +75,12 @@ def clip(text, n=2000):
 
 
 class Memory:
+    """What we know about one user, kept current as new conversations come in.
+
+    llm: a tidemark.LLM (any OpenAI-compatible endpoint). embed: a callable mapping a list of texts to unit vectors,
+    e.g. tidemark.LocalEmbedder() or tidemark.APIEmbedder().
+    """
+
     def __init__(self, llm, embed, implied=True, invalidate=True, k=5, threshold=0.5):
         self.llm, self.embed = llm, embed
         self.implied, self.invalidate = implied, invalidate
@@ -90,8 +101,9 @@ class Memory:
             facts = [f for f in facts if not f["implied"]]
         return facts
 
-    def write(self, messages, date):
-        """Add one session's user messages to memory. Returns the new facts."""
+    def write(self, messages, date=None):
+        """Add one conversation's user messages (list of strings) to memory. Returns the new facts."""
+        date = date or _date.today().isoformat()
         new = [self.ledger.add(f["fact"].strip(), date, f["implied"], f["topic"]) for f in self.extract(messages, date)]
         if not new:
             return []
@@ -129,7 +141,8 @@ class Memory:
 
     def _verify(self, pair):
         """Second look at a flagged pair, letting the model think it through."""
-        text = self.llm.chat([{"role": "user", "content": self._fmt(VERIFY, *pair)}], max_tokens=3000, think=True)
+        prompt = self._fmt(VERIFY, *pair) + ("" if getattr(self.llm, "thinking_switch", False) else REASON_HINT)
+        text = self.llm.chat([{"role": "user", "content": prompt}], max_tokens=3000, think=True)
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
         m = re.search(r'"no_longer_true"\s*:\s*(true|false)', text)
         return bool(m) and m.group(1) == "true"
@@ -151,3 +164,24 @@ class Memory:
                 notes.append(f'The question assumes "{f.text}" but that is no longer true. Since {f.replaced_on[:10]}: '
                              f"{new.text}")
         return notes
+
+    def context(self):
+        """The memory as text, ready to put in a system prompt."""
+        return self.ledger.render()
+
+    def ask(self, question, today=None, guard=True, think=False):
+        """Answer a question with the memory in context, warning the model about outdated premises."""
+        notes = self.premise_notes(question) if guard else []
+        return answer(self.llm, self.context(), question, today or _date.today().isoformat(), notes=notes, think=think)
+
+    def save(self, path):
+        data = {"version": 1, "facts": self.ledger.to_json(), "vecs": [np.asarray(v).round(6).tolist() for v in self.vecs]}
+        Path(path).write_text(json.dumps(data), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path, llm, embed, **kw):
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        mem = cls(llm, embed, **kw)
+        mem.ledger.facts = [Fact(**f) for f in data["facts"]]
+        mem.vecs = [np.array(v, dtype=np.float32) for v in data["vecs"]]
+        return mem
