@@ -17,7 +17,7 @@
 \begin{abstract}
 Memory layers for LLM assistants are good at recalling what a user said and poor at noticing when a later
 conversation quietly overturns it. On STALE, a benchmark of 400 such implicit and explicit conflicts, published
-memory systems score 5 to 18\%. We describe \emph{lastknown}, a small memory layer built around three ideas: record
+memory systems score 5 to 18\%. We describe \emph{LastKnown}, a small memory layer built around three ideas: record
 what each message implies as well as what it states, so that implicit conflicts become explicit; check new facts
 against old ones with a two-stage test, a one-token probability filter followed by brief reasoning only for flagged
 pairs; and always place the user's full current state, with what is no longer true, in the prompt. With an open 8B
@@ -75,7 +75,7 @@ any generation) and how memory is read (the whole current state rather than retr
 
 \section{Method}
 
-lastknown keeps, per user, a ledger of short facts. Each fact has a date, a topic, a flag for whether it was stated or
+LastKnown keeps, per user, a ledger of short facts. Each fact has a date, a topic, a flag for whether it was stated or
 inferred, and, once overturned, a pointer to the fact that overturned it.
 
 \textbf{Only the user's words.} In STALE about 90\% of each conversation is assistant text, which says nothing about
@@ -134,9 +134,9 @@ Held-out 300 & SR & PR & IPA & \textbf{Overall} & Right reason & Keep \\
 \midrule
 User messages, benchmark prompt & 6.7 & 0.7 & 19.3 & 8.9 & 2.5 & 93.0 \\
 User messages, our prompt & 15.7 & 1.0 & 21.0 & 12.6 & 6.5 & 97.0 \\
-lastknown v1 & 66.0 & 41.7 & 34.0 & 47.2 & 38.4 & 53.3 \\
-lastknown, no premise guard & 56.0 & 21.3 & 39.3 & 38.9 & 30.3 & 84.3 \\
-\textbf{lastknown} & \textbf{63.7} & \textbf{57.3} & \textbf{44.0} & \textbf{55.0} & \textbf{48.7} & 65.0 \\
+LastKnown v1 & 66.0 & 41.7 & 34.0 & 47.2 & 38.4 & 53.3 \\
+LastKnown, no premise guard & 56.0 & 21.3 & 39.3 & 38.9 & 30.3 & 84.3 \\
+\textbf{LastKnown} & \textbf{63.7} & \textbf{57.3} & \textbf{44.0} & \textbf{55.0} & \textbf{48.7} & 65.0 \\
 \midrule
 \multicolumn{7}{l}{\textit{Reported in \cite{stale}, Gemini judge, all 400}} \\
 Qwen3.5-9B, full history & & & & 14.6 & & \\
@@ -150,7 +150,7 @@ mean of all six cells, as in the benchmark. Right reason (mean of SR and PR) and
 \label{tab:main}
 \end{table*}
 
-Table~\ref{tab:main} gives the main results. lastknown raises the 8B model from 8.9 to 55.0 overall. Over all 400
+Table~\ref{tab:main} gives the main results. LastKnown raises the 8B model from 8.9 to 55.0 overall. Over all 400
 scenarios it scores 58.2; on the 100 tuning scenarios 68.0, which overstates the held-out score because those
 scenarios are easier (v1, fixed before tuning, also drops from 57.3 to 47.2 between them).
 
@@ -184,7 +184,7 @@ sessions in 51.0\% of all 400 scenarios, overturns the old state only through un
 in 21.0\%.
 
 \textbf{The premise guard is a trade-off.} It adds 36 points on held-out PR but lowers Keep from 84.3 to 65.0: once
-warned, the model is more willing to call things outdated. Without the guard, lastknown scores 38.9 while keeping 84\%
+warned, the model is more willing to call things outdated. Without the guard, LastKnown scores 38.9 while keeping 84\%
 of current facts. Which setting is right depends on whether stale premises or false alarms cost more.
 
 \textbf{Cost.} Per scenario of 50 conversations: 50 extraction calls, about 450 one-token checks and about 170 short
@@ -209,7 +209,7 @@ retention figure next to the benchmark score.
 
 \textbf{STALE accepts the wrong reason.} The judge passes ``the user may no longer be an independent voter'' even when
 the stated reason is that the user later asked about shoe cleaner. In our hand check such answers were common in early
-versions. Counting only corrections that cite the actual change, lastknown's held-out SR falls from 63.7 to 50.0 and its PR
+versions. Counting only corrections that cite the actual change, LastKnown's held-out SR falls from 63.7 to 50.0 and its PR
 from 57.3 to 47.3.
 
 \section{Limitations}
@@ -219,7 +219,7 @@ model judgment, not a human one; the main judge was spot-checked by hand on 12 s
 the scenario's new-state message, which sometimes describes a moment, so a ``no longer the case'' answer is
 occasionally fair. STALE's filler sessions come from many different people, so some of the ``unrelated'' overturns are
 defensible readings of contradictory filler. The memory goes into the prompt in full, which suits dozens of
-conversations but would need trimming for years of history. Finally, lastknown keeps the user's situation, not what was
+conversations but would need trimming for years of history. Finally, LastKnown keeps the user's situation, not what was
 said; it is a complement to transcript retrieval, not a replacement.
 
 \section{Conclusion}
@@ -227,7 +227,7 @@ said; it is a complement to transcript retrieval, not a replacement.
 A small local model can keep long-term memory current far better than today's memory layers if it writes down what
 messages imply, checks conflicts cheaply but not naively, and always sees the whole current state. Two changes to how
 the benchmark is scored, a retention probe and a right-reason check, make the remaining trade-offs visible. Code,
-prompts, hand-written test pairs and all judged answers are at \url{https://github.com/alleyxd/lastknown}.
+prompts, hand-written test pairs and all judged answers are at \url{https://github.com/alleyxd/LastKnown}.
 
 \begin{thebibliography}{99}\small
 \bibitem{stale} H.~Chao, Y.~Bai, R.~Sheng, T.~Li, Y.~Sun. STALE: Can LLM agents know when their memories are no longer
