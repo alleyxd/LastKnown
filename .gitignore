@@ -9,3 +9,6 @@ results/*/*.jsonl
 !results/*/*.judged-*.jsonl
 results/pilot/
 results/*.log
+chain.sh
+run_rest.sh
+run_all.sh
