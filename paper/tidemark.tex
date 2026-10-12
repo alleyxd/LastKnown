@@ -1,0 +1,250 @@
+\documentclass[10pt,twocolumn]{article}
+\usepackage[margin=0.8in]{geometry}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage[hidelinks]{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=*}
+
+\title{Implied Facts and Cheap Conflict Checks:\\Keeping Long-Term Memory Current with a Small Local Model}
+\author{Ali Ashter\\Independent researcher, Calgary, Canada\\\texttt{hello@ashter.dev}}
+\date{October 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Memory layers for LLM assistants are good at recalling what a user said and poor at noticing when a later
+conversation quietly overturns it. On STALE, a benchmark of 400 such implicit and explicit conflicts, published
+memory systems score 5 to 18\%. We describe \emph{tidemark}, a small memory layer built around three ideas: record
+what each message implies as well as what it states, so that implicit conflicts become explicit; check new facts
+against old ones with a two-stage test, a one-token probability filter followed by brief reasoning only for flagged
+pairs; and always place the user's full current state, with what is no longer true, in the prompt. With an open 8B
+model (Qwen3-8B) it scores 55.0 on 300 held-out STALE scenarios, against 8.9 for the same model reading the user's
+messages directly. We also find two gaps in how STALE is scored: it rewards forgetting, since it never checks that
+still-true facts survive, and it accepts corrections given for the wrong reason. We add a retention probe and a
+right-reason check, and report both. Code, prompts and every judged answer are public.
+\end{abstract}
+
+\section{Introduction}
+
+A user tells an assistant they have lived in Portland for years. Months later they mention shaking a bark scorpion
+out of their boot in the dry heat. Nobody says ``I moved'', yet an assistant that still suggests rainy-day
+activities in Portland is wrong. Long-term memory for assistants has mostly been evaluated on recall: finding what the
+user said, sometimes across hundreds of sessions \cite{locomo,longmemeval}. Recall is close to solved on those
+benchmarks. Keeping memory \emph{current} is not.
+
+STALE \cite{stale} isolates this problem. Each of its 400 scenarios hides an old statement and a later one that
+invalidates it, either explicitly (type T1) or only through common sense (type T2), inside about 175K tokens of
+conversation. Three probes follow: whether the old state still holds (state resolution, SR), a question that takes
+the old state for granted (premise resistance, PR), and a task whose right answer depends on the new state without
+naming it (implicit policy adaptation, IPA). Frontier models reading the whole history reach at most 55.2, and
+memory systems such as Mem0 \cite{mem0}, Zep \cite{zep}, A-Mem \cite{amem} and LightMem score 5.1 to 17.8. The
+authors' own pipeline, CUPMem, reaches 68.0 with GPT-4o-mini and about ten kinds of prompts per session.
+
+We ask how far a small model running locally can get, and what makes the difference. Our contributions:
+\begin{itemize}
+\item \textbf{Implied facts.} Writing down what a message implies (``the user lives in a hot desert region'') turns
+an implicit conflict into one that a similarity search and a cheap check can catch. It is the largest single gain in
+our ablation, $+17.4$ points.
+\item \textbf{A two-stage conflict check} for small models. One-token yes/no checks are cheap but badly calibrated;
+the wording alone moved recall from 1 to 11 of 12 conflicts on a hand-written set. A permissive one-token filter
+followed by short reasoning on flagged pairs was both accurate and affordable.
+\item \textbf{Full-state readout.} A user's current state is small, so it always goes into the prompt in full,
+together with what is no longer true. No retrieval step can miss the fact a question depends on.
+\item \textbf{Two scoring fixes for STALE}: a retention probe, without which aggressive forgetting is rewarded, and a
+right-reason check, without which corrections justified by unrelated details count as correct.
+\end{itemize}
+
+\section{Related work}
+
+\textbf{Memory layers.} MemGPT \cite{memgpt} lets the agent page its own memory. Mem0 \cite{mem0} extracts facts and
+asks an LLM whether each new fact should add to, update or delete similar existing ones. Zep \cite{zep} keeps a
+temporal knowledge graph whose edges carry validity intervals and are closed when a contradicting edge arrives.
+A-Mem \cite{amem} maintains evolving linked notes. All of them find candidates for an update by similarity, which
+works for ``I moved to Austin'' against ``I live in Seattle'' but not for a scorpion against Portland.
+
+\textbf{Keeping memory valid.} CUPMem \cite{stale} maintains a structured current-state profile, proposes affected
+state ``buckets'' when a practical basis changes, adjudicates invalidations with an LLM and verifies premises at query
+time. PACMI \cite{pacmi} tracks typed provenance dependencies and propagates invalidation along them, in the lineage
+of truth maintenance systems \cite{doyle}. MemConflict \cite{memconflict} benchmarks memory systems under dynamic,
+static and conditional conflicts. Our system shares the write-side invalidation idea with CUPMem but differs in how
+candidates are found (implied facts rather than bucket proposals), how pairs are judged (a probability filter before
+any generation) and how memory is read (the whole current state rather than retrieved items).
+
+\section{Method}
+
+tidemark keeps, per user, a ledger of short facts. Each fact has a date, a topic, a flag for whether it was stated or
+inferred, and, once overturned, a pointer to the fact that overturned it.
+
+\textbf{Only the user's words.} In STALE about 90\% of each conversation is assistant text, which says nothing about
+the user. Reading only user turns cuts a scenario from about 175K to about 22K tokens.
+
+\textbf{Extraction with implied facts.} After each conversation the model lists lasting facts about the user's life
+as standalone sentences, each with one of 16 topics (home, climate, housing, work, school, family, pets, health, diet,
+religion, transport, routine, hobby, activity, travel, request). It then adds at most three facts the messages clearly
+imply but never state, marked as inferred. The prompt gives one example: scorpions in one's boots in relentless dry
+heat imply living in a hot desert region. Output is constrained to a JSON schema.
+
+\textbf{Conflict check.} Requests and trips never overturn anything. A fact about the current activity (``on a train
+for three more hours'') expires when a later activity arrives. Every other new fact is compared with the five most
+similar current facts of the same topic group (home, climate and housing form one group) and the three most similar
+of any checked topic, by cosine similarity of \texttt{bge-base-en-v1.5} embeddings \cite{bge}. For each pair, stage 1
+asks ``taking the later information into account, is the earlier note still true about the user today?'' and reads
+$p(\textit{No})$ from the first answer token, renormalised over Yes and No. Pairs with $p(\textit{No})>0.5$ go to stage
+2, where the model reasons in thinking mode and returns a JSON verdict; the prompt states that visits, trips, new
+interests, unrelated topics and vague guesses overturn nothing. A confirmed verdict marks the old fact as no longer
+true.
+
+\textbf{Readout.} The answer prompt contains every current fact, newest first, and every contradicted fact with the
+date and the fact that replaced it. Expired activities are left out. The model is told that current facts remain true
+and to treat something as changed only if it is on the second list.
+
+\textbf{Premise guard.} Before answering, the five contradicted facts closest to the question are checked with the
+same one-token readout: ``does this question assume or rely on the following being true?'' If so, a note telling the
+model what changed is appended to the prompt.
+
+\section{Setup}
+
+\textbf{Models.} Answers and memory come from Qwen3-8B \cite{qwen3} in FP8 on vLLM \cite{vllm}, using about 16 GB of
+GPU memory. Grading uses Qwen3-14B-AWQ with thinking enabled and STALE's judge prompt unchanged. The paper used
+Gemini-3.1-flash-lite, which we could not access, so our numbers and theirs are comparable only roughly. As a check,
+our full-history baseline (8.9) lands near the 14.6 reported for Qwen3.5-9B.
+
+\textbf{Split.} All design changes after the first full run were made while inspecting the first 100 scenarios
+(interleaved T1 and T2). We report the remaining 300 as held out.
+
+\textbf{Extra metrics.} \emph{Keep}: we ask the model whether the scenario's newer statement is still the case;
+nothing later contradicts it, so the answer should be yes. \emph{Right reason}: a second judgment, applied to SR and PR
+answers that passed, of whether the correction rests on the actual change rather than an unrelated detail.
+\emph{Linkage}: without any judge, whether the memory marked a fact from the old-state session as overturned by a
+fact from the new-state session.
+
+\textbf{Baselines.} The same model reading all user messages with dates, once with STALE's neutral prompt and once
+with our answer prompt.
+
+\section{Results}
+
+\begin{table*}[t]
+\centering
+\begin{tabular}{lccccccc}
+\toprule
+Held-out 300 & SR & PR & IPA & \textbf{Overall} & Right reason & Keep \\
+\midrule
+User messages, benchmark prompt & 6.7 & 0.7 & 19.3 & 8.9 & 2.5 & 93.0 \\
+User messages, our prompt & 15.7 & 1.0 & 21.0 & 12.6 & 6.5 & 97.0 \\
+tidemark v1 & 66.0 & 41.7 & 34.0 & 47.2 & 38.4 & 53.3 \\
+tidemark, no premise guard & 56.0 & 21.3 & 39.3 & 38.9 & 30.3 & 84.3 \\
+\textbf{tidemark} & \textbf{63.7} & \textbf{57.3} & \textbf{44.0} & \textbf{55.0} & \textbf{48.7} & 65.0 \\
+\midrule
+\multicolumn{7}{l}{\textit{Reported in \cite{stale}, Gemini judge, all 400}} \\
+Qwen3.5-9B, full history & & & & 14.6 & & \\
+Gemini-3.1-pro, full history & & & & 55.2 & & \\
+Mem0 / Zep / A-Mem / LightMem & & & & 8.3 / 6.0 / 5.1 / 17.8 & & \\
+CUPMem (GPT-4o-mini) & & & & 68.0 & & \\
+\bottomrule
+\end{tabular}
+\caption{STALE accuracy (\%) on the 300 held-out scenarios. SR, PR and IPA average the T1 and T2 cells; Overall is the
+mean of all six cells, as in the benchmark. Right reason (mean of SR and PR) and Keep are our additions.}
+\label{tab:main}
+\end{table*}
+
+Table~\ref{tab:main} gives the main results. tidemark raises the 8B model from 8.9 to 55.0 overall. Over all 400
+scenarios it scores 58.2; on the 100 tuning scenarios 68.0, which overstates the held-out score because those
+scenarios are easier (v1, fixed before tuning, also drops from 57.3 to 47.2 between them).
+
+\begin{table}[t]
+\centering
+\begin{tabular}{lcc}
+\toprule
+First 100 scenarios, v1 & Overall & Keep \\
+\midrule
+User messages, our prompt & 11.3 & 97 \\
++ extracted facts & 18.0 & 70 \\
++ two-stage conflict check & 31.3 & 54 \\
++ implied facts & 48.7 & 84 \\
++ premise guard & 57.3 & 48 \\
+\bottomrule
+\end{tabular}
+\caption{What each part adds (v1 pipeline).}
+\label{tab:ablation}
+\end{table}
+
+\textbf{Ablation.} Table~\ref{tab:ablation} adds one component at a time. Extracted facts alone help little;
+conflict checks help more; implied facts give the largest jump ($+17.4$) and also raise retention, because the model
+no longer has to guess at changes the memory has made explicit.
+
+\textbf{What the memory caught.} By the linkage measure, v1 tied the right two sessions in 22.5\% of scenarios. The
+misses were: the check judged the pair still true or the pair was not among the candidates (27.2\%), old and new facts
+were filed under different topic groups (15.8\%), the old fact had already been overturned by something unrelated
+(14.5\%), and the old or new fact had a topic that was never checked (18.0\%). The final version, which adds routines
+and hobbies to the checked topics, lets a few candidates cross topic groups and lets activities expire, links the right
+sessions in 51.0\% of all 400 scenarios, overturns the old state only through unrelated facts in 28.0\% and misses it
+in 21.0\%.
+
+\textbf{The premise guard is a trade-off.} It adds 36 points on held-out PR but lowers Keep from 84.3 to 65.0: once
+warned, the model is more willing to call things outdated. Without the guard, tidemark scores 38.9 while keeping 84\%
+of current facts. Which setting is right depends on whether stale premises or false alarms cost more.
+
+\textbf{Cost.} Per scenario of 50 conversations: 50 extraction calls, about 450 one-token checks and about 170 short
+reasoning calls, all of which can run after a conversation ends. At answer time the memory adds about 13K tokens,
+against 22K for the raw user messages.
+
+\section{Analysis}
+
+\textbf{One-token checks are badly calibrated.} On 24 hand-written pairs (12 conflicts), the question ``can both be
+true today?'' caught 1 conflict, ``is the earlier note still true?'' caught 11 with 1 false alarm, and ``does the later
+note make the earlier one outdated?'' caught 1. On 48 harder pairs, including request-style facts and implicit
+conflicts, the best wording caught 14 of 16 conflicts but raised 13 false alarms in 32. NLI cross-encoders did no
+better (DeBERTa-v3-base: 15/16 with 19 false alarms; large: 13/16 with 11). Requiring the LLM and NLI to agree gave
+11/16 with 5. Short reasoning on the pairs the one-token filter flagged caught 13 of 16 with 1 false alarm, at about
+380 generated tokens per flagged pair. Since nearly every pair in a real ledger is compatible, the false-alarm rate is
+what decides whether a memory keeps working; an early pilot with the one-token check alone kept only 20 to 30\% of
+facts current.
+
+\textbf{STALE rewards forgetting.} A memory that marks everything outdated passes most SR and many PR probes. Our
+early pilots showed exactly this before the retention probe was added. We suggest that results on STALE report a
+retention figure next to the benchmark score.
+
+\textbf{STALE accepts the wrong reason.} The judge passes ``the user may no longer be an independent voter'' even when
+the stated reason is that the user later asked about shoe cleaner. In our hand check such answers were common in early
+versions. Counting only corrections that cite the actual change, tidemark's held-out SR falls from 63.7 to 50.0 and its PR
+from 57.3 to 47.3.
+
+\section{Limitations}
+
+We test one answer model and one judge, and the judge is not the benchmark's. The right-reason check is a second
+model judgment, not a human one; the main judge was spot-checked by hand on 12 scenarios. The retention probe reuses
+the scenario's new-state message, which sometimes describes a moment, so a ``no longer the case'' answer is
+occasionally fair. STALE's filler sessions come from many different people, so some of the ``unrelated'' overturns are
+defensible readings of contradictory filler. The memory goes into the prompt in full, which suits dozens of
+conversations but would need trimming for years of history. Finally, tidemark keeps the user's situation, not what was
+said; it is a complement to transcript retrieval, not a replacement.
+
+\section{Conclusion}
+
+A small local model can keep long-term memory current far better than today's memory layers if it writes down what
+messages imply, checks conflicts cheaply but not naively, and always sees the whole current state. Two changes to how
+the benchmark is scored, a retention probe and a right-reason check, make the remaining trade-offs visible. Code,
+prompts, hand-written test pairs and all judged answers are at \url{https://github.com/alleyxd/tidemark}.
+
+\begin{thebibliography}{99}\small
+\bibitem{stale} H.~Chao, Y.~Bai, R.~Sheng, T.~Li, Y.~Sun. STALE: Can LLM agents know when their memories are no longer
+valid? arXiv:2605.06527, 2026.
+\bibitem{mem0} P.~Chhikara et al. Mem0: Building production-ready AI agents with scalable long-term memory.
+arXiv:2504.19413, 2025.
+\bibitem{zep} P.~Rasmussen et al. Zep: A temporal knowledge graph architecture for agent memory. arXiv:2501.13956, 2025.
+\bibitem{amem} W.~Xu et al. A-MEM: Agentic memory for LLM agents. arXiv:2502.12110, 2025.
+\bibitem{memgpt} C.~Packer et al. MemGPT: Towards LLMs as operating systems. arXiv:2310.08560, 2023.
+\bibitem{locomo} A.~Maharana et al. Evaluating very long-term conversational memory of LLM agents. ACL, 2024.
+\bibitem{longmemeval} D.~Wu et al. LongMemEval: Benchmarking chat assistants on long-term interactive memory. ICLR, 2025.
+\bibitem{pacmi} PACMI: Provenance-aware cascading memory invalidation for long-term LLM agents. arXiv:2610.05732, 2026.
+\bibitem{memconflict} MemConflict: Evaluating long-term memory systems under memory conflicts. arXiv:2605.20926, 2026.
+\bibitem{doyle} J.~Doyle. A truth maintenance system. Artificial Intelligence 12(3), 1979.
+\bibitem{qwen3} Qwen Team. Qwen3 technical report. arXiv:2505.09388, 2025.
+\bibitem{vllm} W.~Kwon et al. Efficient memory management for large language model serving with PagedAttention. SOSP, 2023.
+\bibitem{bge} S.~Xiao et al. C-Pack: Packaged resources to advance general Chinese embedding. arXiv:2309.07597, 2023.
+\end{thebibliography}
+
+\end{document}
