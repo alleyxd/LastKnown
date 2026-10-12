@@ -3,7 +3,7 @@
 For each scenario: did a fact from the session with the old state get overturned by a fact from the session with the
 new state (right), only by something unrelated (wrong), or not at all (missed)?
 
-python bench/linkage.py results/qwen3-8b/tidemark.jsonl results/qwen3-8b-v2/tidemark.jsonl
+python bench/linkage.py results/qwen3-8b/lastknown.jsonl results/qwen3-8b-v2/lastknown.jsonl
 """
 import json
 import sys

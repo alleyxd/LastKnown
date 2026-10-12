@@ -1,6 +1,6 @@
 """Run a memory method on the STALE benchmark and save the three answers per scenario.
 
-TIDEMARK_MODEL=qwen3-8b TIDEMARK_THINKING_SWITCH=1 python bench/stale.py --method tidemark --out results/qwen3-8b/tidemark.jsonl
+LASTKNOWN_MODEL=qwen3-8b LASTKNOWN_THINKING_SWITCH=1 python bench/stale.py --method lastknown --out results/qwen3-8b/lastknown.jsonl
 
 methods:
   turns-plain  all user messages with dates, the benchmark's neutral prompt
@@ -8,7 +8,7 @@ methods:
   facts        extracted facts with dates, no invalidation, no implied facts
   invalidate   facts + conflict check, no implied facts
   noguard      facts + implied facts + conflict check
-  tidemark     noguard + premise guard (warns the model when a question assumes an outdated fact)
+  lastknown     noguard + premise guard (warns the model when a question assumes an outdated fact)
 """
 import argparse
 import os
@@ -20,8 +20,8 @@ from pathlib import Path
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tidemark import LLM, LocalEmbedder, Memory, answer  # noqa: E402
-from tidemark.memory import clip  # noqa: E402
+from lastknown import LLM, LocalEmbedder, Memory, answer  # noqa: E402
+from lastknown.memory import clip  # noqa: E402
 
 HERE = Path(__file__).resolve().parent.parent
 DIMS = ["dim1_query", "dim2_query", "dim3_query", "keep_query"]
@@ -96,7 +96,7 @@ def run_item(item, method, llm, embed, think):
     if method == "turns":
         memory_text = turns_text(item)
     else:
-        mem = Memory(llm, embed, implied=method in ("noguard", "tidemark"), invalidate=method != "facts")
+        mem = Memory(llm, embed, implied=method in ("noguard", "lastknown"), invalidate=method != "facts")
         # extraction does not depend on memory state, so warm the cache for all sessions at once
         with ThreadPoolExecutor(8) as pool:
             list(pool.map(lambda s: mem.extract(s[1], s[0]), [s for s in sessions(item) if s[1]]))
@@ -109,7 +109,7 @@ def run_item(item, method, llm, embed, think):
     out = {}
     for d in DIMS:
         q = query(item, d)
-        notes = mem.premise_notes(q, threshold=float(os.environ.get("TIDEMARK_GUARD", "0.5"))) if method == "tidemark" else []
+        notes = mem.premise_notes(q, threshold=float(os.environ.get("LASTKNOWN_GUARD", "0.5"))) if method == "lastknown" else []
         if notes:
             stats.setdefault("notes", {})[d] = notes
         out[d] = answer(llm, memory_text, q, today, notes=notes, think=think)
@@ -118,7 +118,7 @@ def run_item(item, method, llm, embed, think):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--method", required=True, choices=["turns-plain", "turns", "facts", "invalidate", "noguard", "tidemark"])
+    ap.add_argument("--method", required=True, choices=["turns-plain", "turns", "facts", "invalidate", "noguard", "lastknown"])
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--data", default=HERE / "data" / "stale.json", type=Path)
     ap.add_argument("--limit", type=int)

@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tidemark import LLM  # noqa: E402
+from lastknown import LLM  # noqa: E402
 
 # (earlier, later, earlier is no longer true)
 PAIRS = [

@@ -1,6 +1,6 @@
 import numpy as np
 
-from tidemark import Ledger, Memory
+from lastknown import Ledger, Memory
 
 
 class FakeLLM:

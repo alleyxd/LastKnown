@@ -77,8 +77,8 @@ def clip(text, n=2000):
 class Memory:
     """What we know about one user, kept current as new conversations come in.
 
-    llm: a tidemark.LLM (any OpenAI-compatible endpoint). embed: a callable mapping a list of texts to unit vectors,
-    e.g. tidemark.LocalEmbedder() or tidemark.APIEmbedder().
+    llm: a lastknown.LLM (any OpenAI-compatible endpoint). embed: a callable mapping a list of texts to unit vectors,
+    e.g. lastknown.LocalEmbedder() or lastknown.APIEmbedder().
     """
 
     def __init__(self, llm, embed, implied=True, invalidate=True, k=5, threshold=0.5):

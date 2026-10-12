@@ -1,8 +1,8 @@
 """Two conversations months apart; the second quietly overturns the first.
 
-TIDEMARK_BASE_URL=http://localhost:8000/v1 TIDEMARK_MODEL=qwen3-8b TIDEMARK_THINKING_SWITCH=1 python examples/quickstart.py
+LASTKNOWN_BASE_URL=http://localhost:8000/v1 LASTKNOWN_MODEL=qwen3-8b LASTKNOWN_THINKING_SWITCH=1 python examples/quickstart.py
 """
-from tidemark import LLM, LocalEmbedder, Memory
+from lastknown import LLM, LocalEmbedder, Memory
 
 mem = Memory(LLM(), LocalEmbedder())
 

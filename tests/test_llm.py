@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import httpx
 from openai import BadRequestError
 
-from tidemark import LLM
+from lastknown import LLM
 
 
 def reply(text, logprobs=None):

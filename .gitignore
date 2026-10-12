@@ -17,3 +17,5 @@ run_holdout.sh
 examples/user.json
 paper/*.aux
 paper/*.log
+results/pilot/
+results/judge_table.txt

@@ -1,4 +1,4 @@
-# tidemark
+# lastknown
 
 Long-term memory for LLM assistants that notices when something it remembers is no longer true.
 
@@ -8,16 +8,16 @@ they mention shaking a scorpion out of their boot in the dry heat. Nobody said "
 recommends rainy-day activities in Portland is wrong.
 
 On the [STALE benchmark](https://arxiv.org/abs/2605.06527), which tests exactly this, published memory systems (Mem0,
-Zep, A-Mem, LightMem) score 5 to 18%. tidemark scores 55% on held-out scenarios with an open 8B model (Qwen3-8B),
+Zep, A-Mem, LightMem) score 5 to 18%. lastknown scores 55% on held-out scenarios with an open 8B model (Qwen3-8B),
 close to the 55.2% the paper reports for Gemini-3.1-pro reading the full history (with a different judge, so treat the
-comparison as indicative). Details in [Results](#results) and the [paper](paper/tidemark.pdf).
+comparison as indicative). Details in [Results](#results) and the [paper](paper/lastknown.pdf).
 
 It works with any OpenAI-compatible chat endpoint: OpenAI, vLLM, llama.cpp, Ollama, LM Studio, SGLang and others.
 
 ## Install
 
 ```bash
-pip install "tidemark[local] @ git+https://github.com/alleyxd/tidemark"
+pip install "lastknown[local] @ git+https://github.com/alleyxd/lastknown"
 ```
 
 `[local]` adds sentence-transformers for on-device embeddings. Leave it out if you use an embeddings API.
@@ -25,7 +25,7 @@ pip install "tidemark[local] @ git+https://github.com/alleyxd/tidemark"
 ## Quick start
 
 ```python
-from tidemark import LLM, LocalEmbedder, Memory
+from lastknown import LLM, LocalEmbedder, Memory
 
 llm = LLM(base_url="http://localhost:8000/v1", model="qwen3-8b", thinking_switch=True)   # vLLM; see below for others
 mem = Memory(llm, LocalEmbedder())
@@ -75,11 +75,11 @@ Configure in code (`LLM(base_url=..., model=..., api_key=...)`) or with environm
 
 | Variable | Meaning |
 |---|---|
-| `TIDEMARK_BASE_URL` | chat endpoint, default `http://localhost:8000/v1` |
-| `TIDEMARK_MODEL` | model name as the server knows it |
-| `TIDEMARK_API_KEY` | API key (falls back to `OPENAI_API_KEY`) |
-| `TIDEMARK_THINKING_SWITCH` | `1` to send `enable_thinking` per request (vLLM or SGLang serving Qwen3 or similar) |
-| `TIDEMARK_EMBED_MODEL`, `TIDEMARK_EMBED_BASE_URL` | for `APIEmbedder` |
+| `LASTKNOWN_BASE_URL` | chat endpoint, default `http://localhost:8000/v1` |
+| `LASTKNOWN_MODEL` | model name as the server knows it |
+| `LASTKNOWN_API_KEY` | API key (falls back to `OPENAI_API_KEY`) |
+| `LASTKNOWN_THINKING_SWITCH` | `1` to send `enable_thinking` per request (vLLM or SGLang serving Qwen3 or similar) |
+| `LASTKNOWN_EMBED_MODEL`, `LASTKNOWN_EMBED_BASE_URL` | for `APIEmbedder` |
 
 | Server | Example |
 |---|---|
@@ -91,7 +91,7 @@ Configure in code (`LLM(base_url=..., model=..., api_key=...)`) or with environm
 
 What the server needs, and what happens if it lacks it:
 
-- **JSON-schema output** (`response_format`) for fact extraction. Without it, tidemark asks for JSON in the prompt and
+- **JSON-schema output** (`response_format`) for fact extraction. Without it, lastknown asks for JSON in the prompt and
   parses the reply.
 - **Logprobs** for the one-token conflict check. Without them it reads a short Yes/No reply instead. This works, but it
   is coarser: in our tests some changes were missed that the logprob version caught. Use a server with logprobs if
@@ -144,11 +144,11 @@ Design changes were made while looking at the first 100 scenarios, so the main t
 |---|---|---|---|---|---|---|
 | All user messages, benchmark prompt | 6.7 | 0.7 | 19.3 | 8.9 | 2.5 | 93% |
 | All user messages, our answer prompt | 15.7 | 1.0 | 21.0 | 12.6 | 6.5 | 97% |
-| tidemark v1 | 66.0 | 41.7 | 34.0 | 47.2 | 38.4 | 53% |
-| tidemark, no premise guard | 56.0 | 21.3 | 39.3 | 38.9 | 30.3 | 84% |
-| **tidemark** | **63.7** | **57.3** | **44.0** | **55.0** | **48.7** | 65% |
+| lastknown v1 | 66.0 | 41.7 | 34.0 | 47.2 | 38.4 | 53% |
+| lastknown, no premise guard | 56.0 | 21.3 | 39.3 | 38.9 | 30.3 | 84% |
+| **lastknown** | **63.7** | **57.3** | **44.0** | **55.0** | **48.7** | 65% |
 
-Each column averages T1 and T2. Over all 400 scenarios tidemark scores 58.2 (`results/table_final.txt`).
+Each column averages T1 and T2. Over all 400 scenarios lastknown scores 58.2 (`results/table_final.txt`).
 
 For reference, the STALE paper reports Qwen3.5-9B with the full history at 14.6, Gemini-3.1-pro at 55.2, published
 memory systems at 5.1 to 17.8, and its own CUPMem pipeline (GPT-4o-mini, about ten prompt types per session) at 68.0.
@@ -159,7 +159,7 @@ Two columns are not part of STALE, and both matter:
 
 - **Keeps new fact.** STALE never checks that a still-true fact survives, so a memory that forgets everything scores
   well. We also ask whether the newer fact is still the case. The premise guard buys 36 points on false-premise
-  questions and costs 19 points here; without it tidemark keeps 84%.
+  questions and costs 19 points here; without it lastknown keeps 84%.
 - **Right reason.** STALE's judge passes "the user may no longer live there" whatever the reason given. This column
   (state and false-premise questions) only counts answers that point to the actual change.
 
@@ -195,7 +195,7 @@ calls, all of which can run after the conversation. At answer time the memory ad
 ## Reproducing the benchmark
 
 ```bash
-git clone https://github.com/alleyxd/tidemark && cd tidemark
+git clone https://github.com/alleyxd/lastknown && cd lastknown
 uv venv && uv pip install -e ".[dev]"
 git clone https://github.com/icedreamc/STALE ref/STALE          # judge prompt
 curl -L --create-dirs -o data/stale.json \
@@ -205,7 +205,7 @@ docker run -d --gpus all -p 8000:8000 --ipc=host -v ~/.cache/huggingface:/root/.
   vllm/vllm-openai:latest --model Qwen/Qwen3-8B --served-model-name qwen3-8b --quantization fp8 \
   --kv-cache-dtype fp8 --gpu-memory-utilization 0.5 --max-model-len 32768 --enable-prefix-caching
 
-TIDEMARK_MODEL=qwen3-8b bash bench/run_stale.sh      # about 10 GPU hours on an RTX 5090
+LASTKNOWN_MODEL=qwen3-8b bash bench/run_stale.sh      # about 10 GPU hours on an RTX 5090
 ```
 
 `bench/run_stale.sh` lists the judging steps. `bench/conflict_dev.py` holds the hand-written fact pairs (not from any
@@ -220,11 +220,11 @@ pytest -q
 ## Citation
 
 ```bibtex
-@misc{ashter2026tidemark,
+@misc{ashter2026lastknown,
   title  = {Implied Facts and Cheap Conflict Checks: Keeping Long-Term Memory Current with a Small Local Model},
   author = {Ashter, Ali},
   year   = {2026},
-  url    = {https://github.com/alleyxd/tidemark}
+  url    = {https://github.com/alleyxd/lastknown}
 }
 ```
 

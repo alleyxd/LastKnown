@@ -18,11 +18,11 @@ class LLM:
     """
 
     def __init__(self, base_url=None, model=None, api_key=None, thinking_switch=None):
-        self.client = OpenAI(base_url=base_url or os.environ.get("TIDEMARK_BASE_URL", "http://localhost:8000/v1"),
-                             api_key=api_key or os.environ.get("TIDEMARK_API_KEY")
+        self.client = OpenAI(base_url=base_url or os.environ.get("LASTKNOWN_BASE_URL", "http://localhost:8000/v1"),
+                             api_key=api_key or os.environ.get("LASTKNOWN_API_KEY")
                              or os.environ.get("OPENAI_API_KEY", "none"), timeout=600)
-        self.model = model or os.environ.get("TIDEMARK_MODEL", "local")
-        self.thinking_switch = _env_flag("TIDEMARK_THINKING_SWITCH") if thinking_switch is None else thinking_switch
+        self.model = model or os.environ.get("LASTKNOWN_MODEL", "local")
+        self.thinking_switch = _env_flag("LASTKNOWN_THINKING_SWITCH") if thinking_switch is None else thinking_switch
         self.schema_ok = True      # flipped off if the server rejects json_schema
         self.logprobs_ok = True    # flipped off if the server returns no logprobs
 
