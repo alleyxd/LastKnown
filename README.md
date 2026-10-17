@@ -1,5 +1,7 @@
 # LastKnown
 
+[![tests](https://github.com/alleyxd/LastKnown/actions/workflows/tests.yml/badge.svg)](https://github.com/alleyxd/LastKnown/actions/workflows/tests.yml)
+
 Long-term memory for LLM assistants that notices when something it remembers is no longer true.
 
 Most memory layers are good at recall: ask what city the user mentioned and they find it. They are bad at the harder
