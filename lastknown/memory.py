@@ -165,6 +165,28 @@ class Memory:
                              f"{new.text}")
         return notes
 
+    def find(self, text, k=5):
+        """The facts closest in meaning to text, current or not, as (fact, similarity) pairs, best first."""
+        if not self.ledger.facts:
+            return []
+        sims = np.array(self.vecs) @ self.embed([text])[0]
+        return [(self.ledger.facts[i], float(sims[i])) for i in np.argsort(-sims)[:k]]
+
+    def forget(self, ids):
+        """Delete facts by id, from the current state and the history alike. Returns how many were removed."""
+        ids = {i for i in ids if 0 <= i < len(self.ledger.facts)}
+        keep = [f.id for f in self.ledger.facts if f.id not in ids]
+        self.vecs = [self.vecs[i] for i in keep]
+        self.ledger.remove(ids)
+        return len(ids)
+
+    def forget_about(self, text, threshold=0.6, k=20):
+        """Delete every fact whose meaning is close to text (cosine similarity at least threshold), e.g.
+        mem.forget_about("where the user lives"). Returns the texts that were removed."""
+        hits = [(f, s) for f, s in self.find(text, k) if s >= threshold]
+        self.forget([f.id for f, _ in hits])
+        return [f.text for f, _ in hits]
+
     def context(self):
         """The memory as text, ready to put in a system prompt."""
         return self.ledger.render()

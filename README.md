@@ -71,6 +71,18 @@ mem.save("user.json")
 
 `mem.ask(question)` does the first part for you and returns the model's answer.
 
+When a user asks to be forgotten, delete rather than retire:
+
+```python
+mem.find("where the user lives")                  # closest facts, current or historical, with similarity
+mem.forget_about("where the user lives")          # deletes every fact with similarity >= 0.6; returns their texts
+mem.forget([3, 7])                                # or by id
+mem.save("user.json")                             # gone from the file too
+```
+
+Forgotten facts disappear from the current state, the history and the saved file. A fact that a forgotten one had
+replaced stays retired, so forgetting "moved to Austin" does not bring back "lives in Seattle".
+
 ## Choosing a server and model
 
 Configure in code (`LLM(base_url=..., model=..., api_key=...)`) or with environment variables:
