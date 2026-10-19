@@ -34,6 +34,22 @@ class Ledger:
         if old.current:
             old.replaced_by, old.replaced_on, old.expired = new.id, new.date, expired
 
+    def remove(self, ids):
+        """Delete facts outright, renumbering the rest. A fact that a removed one had replaced stays retired:
+        forgetting "moved to Austin" must not bring back "lives in Seattle" as current."""
+        ids = set(ids)
+        keep = [f for f in self.facts if f.id not in ids]
+        new_id = {f.id: i for i, f in enumerate(keep)}
+        for f in keep:
+            if f.replaced_by is not None:
+                if f.replaced_by in ids:
+                    f.replaced_by, f.expired = -1, True
+                else:
+                    f.replaced_by = new_id[f.replaced_by]
+            f.id = new_id[f.id]
+        self.facts = keep
+        return keep
+
     def contradicted(self):
         return [f for f in self.facts if not f.current and not f.expired]
 

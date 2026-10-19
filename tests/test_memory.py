@@ -79,3 +79,36 @@ def test_save_and_load(tmp_path):
     back = Memory.load(tmp_path / "user.json", llm, fake_embed)
     assert back.context() == mem.context()
     assert len(back.vecs) == len(mem.vecs)
+
+
+def test_forget_removes_facts_and_keeps_old_ones_retired(tmp_path):
+    llm = FakeLLM([
+        [{"fact": "The user lives in Seattle.", "implied": False, "topic": "home"}, {"fact": "The user has a dog.", "implied": False, "topic": "pets"}],
+        [{"fact": "The user lives in Austin.", "implied": False, "topic": "home"}],
+    ])
+    mem = Memory(llm, fake_embed)
+    mem.write(["I live in Seattle and walk my dog"], "2022-01-01 10:00")
+    mem.write(["Just moved to Austin"], "2023-01-01 10:00")
+
+    removed = mem.forget_about("where the user lives", threshold=0.9)
+    assert sorted(removed) == ["The user lives in Austin.", "The user lives in Seattle."]
+    assert [f.text for f in mem.ledger.current()] == ["The user has a dog."]
+    assert "Seattle" not in mem.context() and "Austin" not in mem.context()
+    assert len(mem.vecs) == len(mem.ledger.facts) == 1
+
+    mem.save(tmp_path / "m.json")
+    assert "Seattle" not in (tmp_path / "m.json").read_text()
+
+
+def test_forgetting_the_new_fact_does_not_revive_the_old_one():
+    llm = FakeLLM([
+        [{"fact": "The user lives in Seattle.", "implied": False, "topic": "home"}],
+        [{"fact": "The user lives in Austin.", "implied": False, "topic": "home"}],
+    ])
+    mem = Memory(llm, fake_embed)
+    mem.write(["a"], "2022-01-01 10:00")
+    mem.write(["b"], "2023-01-01 10:00")
+    austin = next(f for f in mem.ledger.facts if "Austin" in f.text)
+    assert mem.forget([austin.id]) == 1
+    assert mem.ledger.current() == []
+    assert "No longer true" not in mem.context()
