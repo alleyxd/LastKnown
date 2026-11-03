@@ -10,7 +10,7 @@ dependencies = ["openai>=1.40", "numpy"]
 
 [project.optional-dependencies]
 local = ["sentence-transformers"]
-dev = ["pytest", "sentence-transformers"]
+dev = ["pytest", "httpx", "sentence-transformers"]
 
 [build-system]
 requires = ["setuptools>=68"]

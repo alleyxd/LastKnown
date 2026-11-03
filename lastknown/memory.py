@@ -104,10 +104,13 @@ class Memory:
     def write(self, messages, date=None):
         """Add one conversation's user messages (list of strings) to memory. Returns the new facts."""
         date = date or _date.today().isoformat()
-        new = [self.ledger.add(f["fact"].strip(), date, f["implied"], f["topic"]) for f in self.extract(messages, date)]
-        if not new:
+        facts = self.extract(messages, date)
+        if not facts:
             return []
-        vecs = self.embed([f.text for f in new])
+        vecs = self.embed([f["fact"].strip() for f in facts])
+        # facts and vectors go in together, so a failed check below can't leave them out of step
+        new = [self.ledger.add(f["fact"].strip(), date, f["implied"], f["topic"]) for f in facts]
+        self.vecs.extend(vecs)
         if self.invalidate:
             if any(f.topic == "activity" for f in new):
                 for o in self.ledger.current():
@@ -132,7 +135,6 @@ class Memory:
             for (o, f), bad in zip(flagged, verdicts):
                 if bad:
                     self.ledger.supersede(o, f)
-        self.vecs.extend(vecs)
         return new
 
     @staticmethod

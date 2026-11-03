@@ -112,3 +112,30 @@ def test_forgetting_the_new_fact_does_not_revive_the_old_one():
     assert mem.forget([austin.id]) == 1
     assert mem.ledger.current() == []
     assert "No longer true" not in mem.context()
+
+
+def test_failed_conflict_check_keeps_memory_usable():
+    class FlakyLLM(FakeLLM):
+        fail = True
+
+        def yes_prob(self, prompt):
+            if self.fail:
+                self.fail = False
+                raise TimeoutError("endpoint timed out")
+            return super().yes_prob(prompt)
+
+    llm = FlakyLLM([
+        [{"fact": "The user lives in Seattle.", "implied": False, "topic": "home"}],
+        [{"fact": "The user lives in Austin.", "implied": False, "topic": "home"}],
+        [{"fact": "The user has a dog.", "implied": False, "topic": "pets"}],
+    ])
+    mem = Memory(llm, fake_embed)
+    mem.write(["I live in Seattle"], "2022-01-01 10:00")
+    try:
+        mem.write(["Just moved to Austin"], "2023-01-01 10:00")
+    except TimeoutError:
+        pass
+    assert len(mem.vecs) == len(mem.ledger.facts)
+    mem.write(["I got a dog"], "2024-01-01 10:00")
+    assert {f.text for f, _ in mem.find("where the user lives", 2)} == {"The user lives in Seattle.",
+                                                                        "The user lives in Austin."}
